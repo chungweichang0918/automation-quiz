@@ -17,6 +17,7 @@
 import glob
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,6 +53,9 @@ def main():
                 img = os.path.join(ROOT, "images", f"q{q['id']:03d}.jpg")
                 if os.path.exists(img):
                     q["img"] = f"images/q{q['id']:03d}.jpg"
+                    # 有原書附圖就不需要文字版的圖形描述
+                    q["q"] = re.sub(r"【圖：[^】]*】", "", q["q"])
+                    q["q"] = re.sub(r"（[^（）]*請對照原書圖[^（）]*）", "", q["q"]).strip()
                 questions.append(q)
     out = os.path.join(ROOT, "data", "questions.js")
     os.makedirs(os.path.dirname(out), exist_ok=True)

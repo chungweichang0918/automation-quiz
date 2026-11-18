@@ -350,6 +350,7 @@
       <div class="top"><span class="id">第 ${q.id} 題</span>${tag}
         <button type="button" class="star-btn ${stars[q.id] ? "on" : ""}" data-star="${q.id}" aria-label="收藏">${stars[q.id] ? "★" : "☆"}</button></div>
       <p class="qt">${esc(q.q)}</p>
+      ${q.img ? `<img class="qfig" src="${q.img}" alt="第 ${q.id} 題附圖" loading="lazy">` : ""}
       <ol>${opts}</ol>
       ${q.note ? `<p class="note">※ ${esc(q.note)}</p>` : ""}
     </article>`;
@@ -590,6 +591,7 @@
           <span class="tag ${ok ? "ok" : "bad"}">${ok ? "答對" : it.picked === null ? "未作答" : "答錯"}</span>
           <button type="button" class="star-btn ${stars[it.q.id] ? "on" : ""}" data-star="${it.q.id}" aria-label="收藏">${stars[it.q.id] ? "★" : "☆"}</button></div>
         <p class="qt">${esc(it.q.q)}</p>
+        ${it.q.img ? `<img class="qfig" src="${it.q.img}" alt="第 ${it.q.id} 題附圖" loading="lazy">` : ""}
         ${ok ? "" : `<p class="mine">你的答案：${mine}</p>`}
         <p class="ans">正確答案：(${LABELS[cp]}) ${esc(it.q.opts[it.q.ans])}</p>
         ${it.q.note ? `<p class="note">※ ${esc(it.q.note)}</p>` : ""}
