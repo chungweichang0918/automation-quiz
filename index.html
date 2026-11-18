@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#4f46e5">
+<title>自動化工程師 刷題</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%234f46e5'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white'%3E%E2%9A%99%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap header-in">
+    <a class="brand" href="#" id="brand"><span class="logo">⚙</span><span>自動化工程師<small>題庫刷題</small></span></a>
+    <nav class="tabs" id="tabs">
+      <button type="button" data-view="home" class="active">首頁</button>
+      <button type="button" data-view="browse">題庫瀏覽</button>
+      <button type="button" data-view="wrong">錯題本<span class="badge" id="badgeWrong">0</span></button>
+      <button type="button" data-view="star">收藏<span class="badge" id="badgeStar">0</span></button>
+    </nav>
+    <button type="button" class="icon-btn" id="themeBtn" title="切換深淺色" aria-label="切換深淺色">◐</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ===== 首頁 ===== -->
+  <section id="view-home" class="view">
+    <div class="hero">
+      <div>
+        <h1>今天刷幾題？</h1>
+        <p id="heroSub">載入中…</p>
+      </div>
+      <div class="hero-actions">
+        <button type="button" class="btn light" id="qsRandom">🎲 隨機 20 題</button>
+        <button type="button" class="btn light" id="qsContinue">▶ 接續上次進度</button>
+        <button type="button" class="btn light" id="qsWrong">🔁 錯題複習</button>
+        <button type="button" class="btn light" id="qsStar">★ 收藏複習</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="ring" id="ringDone"><span id="ringDoneTxt">0%</span></div>
+        <div><b id="stDone">0</b><small>已做過 / 全部題數</small></div>
+      </div>
+      <div class="stat">
+        <div class="ring" id="ringAcc"><span id="ringAccTxt">–</span></div>
+        <div><b id="stAcc">–</b><small>整體正確率</small></div>
+      </div>
+      <div class="stat">
+        <div class="ico bad">✕</div>
+        <div><b id="stWrong">0</b><small>錯題本（上次答錯）</small></div>
+      </div>
+      <div class="stat">
+        <div class="ico acc">✎</div>
+        <div><b id="stToday">0</b><small>今日已刷題數</small></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>自訂練習</h2>
+        <div class="field">
+          <label>題號範圍</label>
+          <div class="row">
+            <span>第</span><input type="number" id="rangeFrom" min="1" value="1">
+            <span>題 到 第</span><input type="number" id="rangeTo" min="1" value="1"><span>題</span>
+          </div>
+          <div class="chips" id="presets"></div>
+        </div>
+        <div class="field">
+          <label for="count">題數：<b id="countLabel">20</b> 題</label>
+          <div class="row">
+            <input type="range" id="countRange" min="1" max="100" value="20">
+            <input type="number" id="count" min="1" value="20">
+            <button type="button" class="btn ghost sm" id="countAll">全部</button>
+          </div>
+        </div>
+        <div class="field two">
+          <div>
+            <label for="source">題目來源</label>
+            <select id="source">
+              <option value="all">範圍內全部</option>
+              <option value="wrong">只刷錯題</option>
+              <option value="new">只刷沒做過的</option>
+              <option value="star">只刷收藏</option>
+            </select>
+          </div>
+          <div>
+            <label for="order">出題順序</label>
+            <select id="order">
+              <option value="random">隨機</option>
+              <option value="seq">依題號</option>
+            </select>
+          </div>
+          <div>
+            <label for="mode">看答案時機</label>
+            <select id="mode">
+              <option value="instant">每題作答後立刻看</option>
+              <option value="exam">交卷後再看</option>
+            </select>
+          </div>
+          <div>
+            <label for="timer">計時</label>
+            <select id="timer">
+              <option value="up">正計時</option>
+              <option value="off">不計時</option>
+            </select>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="shuffleOpts" checked> 每次重新打亂選項順序</label>
+        <p class="muted small" id="poolInfo"></p>
+        <button type="button" class="btn primary block" id="start">開始刷題</button>
+      </div>
+
+      <div class="card">
+        <h2>題號地圖 <small class="muted">點一格從該題開始刷 20 題</small></h2>
+        <div class="legend">
+          <span><i class="cell"></i>未做</span>
+          <span><i class="cell ok"></i>上次答對</span>
+          <span><i class="cell bad"></i>上次答錯</span>
+          <span><i class="cell starred"></i>收藏</span>
+        </div>
+        <div class="map" id="map"></div>
+        <details class="data-box">
+          <summary>資料與備份</summary>
+          <div class="row wrapx">
+            <button type="button" class="btn ghost sm" id="exportBtn">匯出紀錄</button>
+            <button type="button" class="btn ghost sm" id="importBtn">匯入紀錄</button>
+            <button type="button" class="btn ghost sm danger" id="resetStats">清除紀錄</button>
+            <input type="file" id="importFile" accept="application/json" hidden>
+          </div>
+          <p class="muted small">紀錄只存在這個瀏覽器；換裝置時用「匯出／匯入」搬移。</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="card" id="historyCard" hidden>
+      <h2>最近練習</h2>
+      <div id="history"></div>
+    </div>
+  </section>
+
+  <!-- ===== 題庫瀏覽 / 錯題本 / 收藏（共用） ===== -->
+  <section id="view-browse" class="view" hidden>
+    <div class="page-head">
+      <h1 id="browseTitle">題庫瀏覽</h1>
+      <p class="muted" id="browseSub"></p>
+    </div>
+    <div class="card toolbar">
+      <input type="search" id="search" placeholder="搜尋題目或選項關鍵字…">
+      <div class="row">
+        <span>第</span><input type="number" id="bFrom" min="1" value="1">
+        <span>–</span><input type="number" id="bTo" min="1" value="1"><span>題</span>
+        <label class="check inline"><input type="checkbox" id="showAns" checked> 顯示答案</label>
+        <button type="button" class="btn primary sm" id="browseStart">刷這些題</button>
+      </div>
+    </div>
+    <div id="list"></div>
+    <button type="button" class="btn ghost block" id="more" hidden>載入更多</button>
+  </section>
+
+  <!-- ===== 作答 ===== -->
+  <section id="view-quiz" class="view" hidden>
+    <div class="quiz-top">
+      <button type="button" class="btn ghost sm" id="quit">✕ 結束</button>
+      <div class="progress"><div id="bar"></div></div>
+      <span class="timer" id="timerTxt">00:00</span>
+      <span class="counter" id="counter"></span>
+    </div>
+
+    <article class="card qcard">
+      <div class="q-meta">
+        <span class="qno" id="qno"></span>
+        <button type="button" class="star-btn" id="starBtn" aria-label="收藏">☆</button>
+      </div>
+      <p class="qtext" id="qtext"></p>
+      <img id="qimg" alt="" hidden>
+      <div id="options" class="options"></div>
+      <div id="feedback" class="feedback" hidden></div>
+    </article>
+
+    <div class="nav">
+      <button type="button" class="btn ghost" id="prev">← 上一題</button>
+      <button type="button" class="btn primary" id="next">下一題 →</button>
+    </div>
+
+    <details class="card navigator" open>
+      <summary>題目導覽</summary>
+      <div class="navchips" id="navChips"></div>
+    </details>
+    <p class="muted small center">快捷鍵：A–D 或 1–4 作答 · Enter / → 下一題 · ← 上一題 · S 收藏</p>
+  </section>
+
+  <!-- ===== 成績 ===== -->
+  <section id="view-result" class="view" hidden>
+    <div class="result-hero card">
+      <div class="big-ring" id="bigRing"><span id="bigScore">0</span><small>分</small></div>
+      <div class="result-text">
+        <h1 id="resultTitle">完成！</h1>
+        <p id="resultSub"></p>
+        <div class="row">
+          <button type="button" class="btn primary" id="retryWrong">重刷答錯的題目</button>
+          <button type="button" class="btn ghost" id="retryAll">再刷一次同樣題目</button>
+          <button type="button" class="btn ghost" id="backHome">回首頁</button>
+        </div>
+      </div>
+    </div>
+    <div class="page-head row between">
+      <h2>題目檢討</h2>
+      <div class="seg" id="reviewFilter">
+        <button type="button" data-f="wrong" class="active">答錯 / 未答</button>
+        <button type="button" data-f="all">全部</button>
+      </div>
+    </div>
+    <div id="reviewList"></div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast" hidden></div>
+<footer class="site-footer">自動化概論題庫 · 紀錄僅存於本機瀏覽器</footer>
+
+<script src="data/questions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
