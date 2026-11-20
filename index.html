@@ -2,20 +2,27 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#4f46e5">
+<meta name="description" content="自動化工程師證照題庫刷題網站：自選題號範圍、錯題本、收藏、離線可用">
 <title>自動化工程師 刷題</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%234f46e5'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white'%3E%E2%9A%99%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header class="site-header">
   <div class="wrap header-in">
-    <a class="brand" href="#" id="brand"><span class="logo">⚙</span><span>自動化工程師<small>題庫刷題</small></span></a>
-    <nav class="tabs" id="tabs">
+    <a class="brand" href="#" id="brand"><span class="logo" id="brandLogo">⚙</span><span>自動化工程師<small>題庫刷題</small></span></a>
+    <label class="subject-pick" for="subjectSel">
+      <span class="sr-only">選擇科目</span>
+      <select id="subjectSel" aria-label="選擇科目"></select>
+    </label>
+    <nav class="tabs" id="tabs" aria-label="主選單">
       <button type="button" data-view="home" class="active">首頁</button>
-      <button type="button" data-view="browse">題庫瀏覽</button>
+      <button type="button" data-view="browse">題庫</button>
       <button type="button" data-view="wrong">錯題本<span class="badge" id="badgeWrong">0</span></button>
       <button type="button" data-view="star">收藏<span class="badge" id="badgeStar">0</span></button>
     </nav>
@@ -23,13 +30,27 @@
   </div>
 </header>
 
-<main class="wrap">
+<noscript><p class="wrap" style="padding:24px">這個網站需要啟用 JavaScript 才能使用。</p></noscript>
+
+<main class="wrap" id="main">
 
   <!-- ===== 首頁 ===== -->
   <section id="view-home" class="view">
+
+    <div class="resume card" id="resumeBox" hidden>
+      <div>
+        <b>有一回測驗還沒做完</b>
+        <p class="muted small" id="resumeInfo"></p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn primary sm" id="resumeGo">繼續作答</button>
+        <button type="button" class="btn ghost sm" id="resumeDrop">放棄</button>
+      </div>
+    </div>
+
     <div class="hero">
       <div>
-        <h1>今天刷幾題？</h1>
+        <h1 id="heroTitle">今天刷幾題？</h1>
         <p id="heroSub">載入中…</p>
       </div>
       <div class="hero-actions">
@@ -65,16 +86,16 @@
         <div class="field">
           <label>題號範圍</label>
           <div class="row">
-            <span>第</span><input type="number" id="rangeFrom" min="1" value="1">
-            <span>題 到 第</span><input type="number" id="rangeTo" min="1" value="1"><span>題</span>
+            <span>第</span><input type="number" id="rangeFrom" min="1" value="1" inputmode="numeric">
+            <span>題 到 第</span><input type="number" id="rangeTo" min="1" value="1" inputmode="numeric"><span>題</span>
           </div>
           <div class="chips" id="presets"></div>
         </div>
         <div class="field">
           <label for="count">題數：<b id="countLabel">20</b> 題</label>
           <div class="row">
-            <input type="range" id="countRange" min="1" max="100" value="20">
-            <input type="number" id="count" min="1" value="20">
+            <input type="range" id="countRange" min="1" max="100" value="20" aria-label="題數">
+            <input type="number" id="count" min="1" value="20" inputmode="numeric">
             <button type="button" class="btn ghost sm" id="countAll">全部</button>
           </div>
         </div>
@@ -129,12 +150,17 @@
           <div class="row wrapx">
             <button type="button" class="btn ghost sm" id="exportBtn">匯出紀錄</button>
             <button type="button" class="btn ghost sm" id="importBtn">匯入紀錄</button>
-            <button type="button" class="btn ghost sm danger" id="resetStats">清除紀錄</button>
+            <button type="button" class="btn ghost sm danger" id="resetStats">清除這科紀錄</button>
             <input type="file" id="importFile" accept="application/json" hidden>
           </div>
-          <p class="muted small">紀錄只存在這個瀏覽器；換裝置時用「匯出／匯入」搬移。</p>
+          <p class="muted small">紀錄只存在這個瀏覽器；換裝置時用「匯出／匯入」搬移（所有科目一起備份）。</p>
         </details>
       </div>
+    </div>
+
+    <div class="card" id="subjectsCard">
+      <h2>所有科目</h2>
+      <div class="subject-cards" id="subjectCards"></div>
     </div>
 
     <div class="card" id="historyCard" hidden>
@@ -150,10 +176,10 @@
       <p class="muted" id="browseSub"></p>
     </div>
     <div class="card toolbar">
-      <input type="search" id="search" placeholder="搜尋題目或選項關鍵字…">
+      <input type="search" id="search" placeholder="搜尋題目或選項關鍵字…" aria-label="搜尋">
       <div class="row">
-        <span>第</span><input type="number" id="bFrom" min="1" value="1">
-        <span>–</span><input type="number" id="bTo" min="1" value="1"><span>題</span>
+        <span>第</span><input type="number" id="bFrom" min="1" value="1" inputmode="numeric">
+        <span>–</span><input type="number" id="bTo" min="1" value="1" inputmode="numeric"><span>題</span>
         <label class="check inline"><input type="checkbox" id="showAns" checked> 顯示答案</label>
         <button type="button" class="btn primary sm" id="browseStart">刷這些題</button>
       </div>
@@ -166,32 +192,32 @@
   <section id="view-quiz" class="view" hidden>
     <div class="quiz-top">
       <button type="button" class="btn ghost sm" id="quit">✕ 結束</button>
-      <div class="progress"><div id="bar"></div></div>
+      <div class="progress" role="progressbar" aria-label="作答進度"><div id="bar"></div></div>
       <span class="timer" id="timerTxt">00:00</span>
       <span class="counter" id="counter"></span>
     </div>
 
-    <article class="card qcard">
+    <article class="card qcard" id="qcard">
       <div class="q-meta">
         <span class="qno" id="qno"></span>
         <button type="button" class="star-btn" id="starBtn" aria-label="收藏">☆</button>
       </div>
       <p class="qtext" id="qtext"></p>
-      <img id="qimg" alt="" hidden>
-      <div id="options" class="options"></div>
-      <div id="feedback" class="feedback" hidden></div>
+      <img id="qimg" alt="題目附圖" hidden>
+      <div id="options" class="options" role="group" aria-label="選項"></div>
+      <div id="feedback" class="feedback" role="status" aria-live="polite" hidden></div>
     </article>
-
-    <div class="nav">
-      <button type="button" class="btn ghost" id="prev">← 上一題</button>
-      <button type="button" class="btn primary" id="next">下一題 →</button>
-    </div>
 
     <details class="card navigator" open>
       <summary>題目導覽</summary>
       <div class="navchips" id="navChips"></div>
     </details>
-    <p class="muted small center">快捷鍵：A–D 或 1–4 作答 · Enter / → 下一題 · ← 上一題 · S 收藏</p>
+    <p class="muted small center keys">快捷鍵：A–D 或 1–4 作答 · Enter / → 下一題 · ← 上一題 · S 收藏 · 手機可左右滑動換題</p>
+
+    <div class="nav" id="navBar">
+      <button type="button" class="btn ghost" id="prev">← 上一題</button>
+      <button type="button" class="btn primary" id="next">下一題 →</button>
+    </div>
   </section>
 
   <!-- ===== 成績 ===== -->
@@ -220,10 +246,11 @@
 
 </main>
 
-<div class="toast" id="toast" hidden></div>
-<footer class="site-footer">自動化概論題庫 · 紀錄僅存於本機瀏覽器</footer>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<footer class="site-footer"><span id="footTxt">題庫刷題 · 紀錄僅存於本機瀏覽器</span></footer>
 
-<script src="data/questions.js"></script>
+<script src="data/subjects.js"></script>
+<script src="data/version.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

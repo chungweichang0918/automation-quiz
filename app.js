@@ -1,21 +1,17 @@
 (function () {
   "use strict";
-  const BANK = window.QUESTIONS || [];
-  const BY_ID = {};
-  BANK.forEach((q) => { BY_ID[q.id] = q; });
-  const MAX_ID = BANK.reduce((m, q) => Math.max(m, q.id), 0);
+
+  /* =========================================================
+   * 全域：科目、儲存、小工具
+   * ======================================================= */
+  const SUBJECTS = window.SUBJECTS || [];
+  window.QBANKS = window.QBANKS || {};
   const LABELS = ["A", "B", "C", "D"];
-  const K = {
-    stats: "autoquiz.stats.v1",
-    stars: "autoquiz.stars.v1",
-    hist: "autoquiz.hist.v1",
-    daily: "autoquiz.daily.v1",
-    set: "autoquiz.settings.v1",
-    theme: "autoquiz.theme.v1",
-  };
   const $ = (id) => document.getElementById(id);
 
-  /* ---------- 儲存 ---------- */
+  const GLOBAL_KEYS = { theme: "autoquiz.theme.v1", subject: "autoquiz.subject.v1" };
+  const LEGACY = { stats: "autoquiz.stats.v1", stars: "autoquiz.stars.v1", hist: "autoquiz.hist.v1", daily: "autoquiz.daily.v1", set: "autoquiz.settings.v1" };
+
   function load(key, fallback) {
     try {
       const v = JSON.parse(localStorage.getItem(key));
@@ -25,22 +21,29 @@
   function save(key, val) {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* 無痕模式：忽略 */ }
   }
-  let stats = load(K.stats, {});   // id -> {r, w, last}
-  let stars = load(K.stars, {});   // id -> 1
-  let hist = load(K.hist, []);     // [{t, n, right, secs}]
-  let daily = load(K.daily, { d: "", n: 0 });
-
-  function today() {
-    const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  function drop(key) {
+    try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
   }
-  function bumpDaily() {
-    if (daily.d !== today()) daily = { d: today(), n: 0 };
-    daily.n++;
-    save(K.daily, daily);
+  const keyOf = (sid, name) => `autoquiz2.${sid}.${name}`;
+
+  // 舊版（只有一科）的紀錄 → 搬到「自動化概論」名下，只搬一次
+  function migrateLegacy() {
+    const sid = "automation";
+    if (localStorage.getItem(keyOf(sid, "migrated"))) return;
+    try {
+      let any = false;
+      Object.keys(LEGACY).forEach((name) => {
+        const raw = localStorage.getItem(LEGACY[name]);
+        if (raw !== null && localStorage.getItem(keyOf(sid, name)) === null) {
+          localStorage.setItem(keyOf(sid, name), raw);
+          any = true;
+        }
+      });
+      localStorage.setItem(keyOf(sid, "migrated"), "1");
+      return any;
+    } catch (e) { /* ignore */ }
   }
 
-  /* ---------- 工具 ---------- */
   function shuffle(arr) {
     const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) {
@@ -57,21 +60,103 @@
     const m = Math.floor(sec / 60), s = sec % 60;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  }
   let toastTimer = null;
   function toast(msg) {
     const t = $("toast");
     t.textContent = msg;
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 2400);
   }
+
+  /* =========================================================
+   * 目前科目的狀態
+   * ======================================================= */
+  let subject = null;          // {id, name, ...}
+  let BANK = [];
+  let BY_ID = {};
+  let MAX_ID = 0;
+  let stats = {};              // id -> {r, w, last}
+  let stars = {};              // id -> 1
+  let hist = [];               // [{t, n, right, secs}]
+  let daily = { d: "", n: 0 };
+
+  const K = (name) => keyOf(subject.id, name);
+  const saveStats = () => save(K("stats"), stats);
+  const saveStars = () => save(K("stars"), stars);
+  const saveHist = () => save(K("hist"), hist);
+  const saveDaily = () => save(K("daily"), daily);
+
   const wrongIds = () => BANK.filter((q) => stats[q.id] && stats[q.id].last === 0).map((q) => q.id);
   const starIds = () => BANK.filter((q) => stars[q.id]).map((q) => q.id);
 
-  /* ---------- 版面切換 ---------- */
+  function bumpDaily() {
+    if (daily.d !== today()) daily = { d: today(), n: 0 };
+    daily.n++;
+    saveDaily();
+  }
+
+  // 不用載入題庫就能讀某科的進度（給「所有科目」卡片用）
+  function peekStats(sid) {
+    return load(keyOf(sid, "stats"), null) || (sid === "automation" ? load(LEGACY.stats, {}) : {});
+  }
+
+  function loadSubjectScript(id) {
+    if (window.QBANKS[id]) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = `data/${id}.js` + (window.APP_VERSION ? `?v=${window.APP_VERSION}` : "");
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("載入題庫失敗"));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function selectSubject(id, opts) {
+    opts = opts || {};
+    const meta = SUBJECTS.find((s) => s.id === id) || SUBJECTS[0];
+    if (!meta) return;
+    stopTimer();
+    session = null;
+    $("heroSub").textContent = "載入題庫中…";
+    try {
+      await loadSubjectScript(meta.id);
+    } catch (e) {
+      toast("題庫載入失敗，請確認網路後重新整理");
+      return;
+    }
+    subject = meta;
+    save(GLOBAL_KEYS.subject, subject.id);
+    BANK = window.QBANKS[subject.id] || [];
+    BY_ID = {};
+    BANK.forEach((q) => { BY_ID[q.id] = q; });
+    MAX_ID = BANK.reduce((m, q) => Math.max(m, q.id), 0);
+    stats = load(K("stats"), {});
+    stars = load(K("stars"), {});
+    hist = load(K("hist"), []);
+    daily = load(K("daily"), { d: "", n: 0 });
+
+    $("subjectSel").value = subject.id;
+    $("brandLogo").textContent = subject.icon || "⚙";
+    document.title = `${subject.name} 刷題`;
+    if (opts.updateHash !== false) {
+      try { history.replaceState(null, "", "#" + subject.id); } catch (e) { /* file:// */ }
+    }
+    setupHomeForSubject();
+    goTab("home");
+  }
+
+  /* =========================================================
+   * 版面切換
+   * ======================================================= */
   let browseMode = "browse"; // browse | wrong | star
   function showView(name) {
     ["home", "browse", "quiz", "result"].forEach((v) => { $("view-" + v).hidden = v !== name; });
+    document.body.classList.toggle("in-quiz", name === "quiz");
     window.scrollTo(0, 0);
   }
   function setTab(tab) {
@@ -83,37 +168,41 @@
     browseMode = tab;
     setTab(tab);
     const titles = { browse: "題庫瀏覽", wrong: "錯題本", star: "收藏題目" };
-    $("browseTitle").textContent = titles[tab];
+    $("browseTitle").textContent = `${subject.name} · ${titles[tab]}`;
     $("bFrom").value = 1;
-    $("bTo").value = MAX_ID;
+    $("bTo").value = Math.max(1, MAX_ID);
     $("search").value = "";
     renderBrowse(true);
     showView("browse");
   }
 
-  /* ---------- 主題 ---------- */
+  /* =========================================================
+   * 主題（深淺色）
+   * ======================================================= */
   function applyTheme(t) {
     document.documentElement.dataset.theme = t;
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", t === "dark" ? "#0e1020" : "#4f46e5");
   }
   function initTheme() {
-    let t = load(K.theme, null);
+    let t = load(GLOBAL_KEYS.theme, null);
     if (!t) t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     applyTheme(t);
     $("themeBtn").addEventListener("click", () => {
       const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
       applyTheme(next);
-      save(K.theme, next);
+      save(GLOBAL_KEYS.theme, next);
     });
   }
 
-  /* ---------- 首頁 ---------- */
+  /* =========================================================
+   * 首頁
+   * ======================================================= */
   function readRange() {
     let from = parseInt($("rangeFrom").value, 10) || 1;
     let to = parseInt($("rangeTo").value, 10) || MAX_ID;
-    from = clamp(from, 1, MAX_ID);
-    to = clamp(to, 1, MAX_ID);
+    from = clamp(from, 1, Math.max(1, MAX_ID));
+    to = clamp(to, 1, Math.max(1, MAX_ID));
     if (from > to) [from, to] = [to, from];
     return [from, to];
   }
@@ -137,10 +226,12 @@
     $("badgeWrong").textContent = wrongIds().length;
     $("badgeStar").textContent = starIds().length;
   }
+
   function renderStats() {
-    const done = Object.keys(stats).length;
+    const empty = BANK.length === 0;
+    const done = Object.keys(stats).filter((id) => BY_ID[id]).length;
     let r = 0, w = 0;
-    Object.values(stats).forEach((s) => { r += s.r; w += s.w; });
+    Object.keys(stats).forEach((id) => { if (BY_ID[id]) { r += stats[id].r; w += stats[id].w; } });
     const donePct = BANK.length ? Math.round((done / BANK.length) * 100) : 0;
     const acc = r + w ? Math.round((r / (r + w)) * 100) : null;
     const wrong = wrongIds().length;
@@ -152,14 +243,21 @@
     setRing($("ringAcc"), acc || 0, acc !== null && acc < 60 ? "#f43f5e" : "#22c55e");
     $("stWrong").textContent = wrong;
     $("stToday").textContent = daily.d === today() ? daily.n : 0;
-    $("heroSub").textContent = `題庫共 ${BANK.length} 題 · 已完成 ${donePct}% · 錯題 ${wrong} 題 · 收藏 ${starIds().length} 題`;
+    $("heroTitle").textContent = `${subject.name}　今天刷幾題？`;
+    $("heroSub").textContent = empty
+      ? "這個科目的題庫還沒建立，敬請期待"
+      : `題庫共 ${BANK.length} 題 · 已完成 ${donePct}% · 錯題 ${wrong} 題 · 收藏 ${starIds().length} 題`;
+    $("qsRandom").disabled = empty;
+    $("qsContinue").disabled = empty;
     $("qsWrong").disabled = wrong === 0;
     $("qsStar").disabled = starIds().length === 0;
     updateBadges();
   }
+
   function renderMap() {
     const map = $("map");
     map.innerHTML = "";
+    if (!BANK.length) { map.innerHTML = '<p class="muted small">尚無題目</p>'; return; }
     const frag = document.createDocumentFragment();
     BANK.forEach((q) => {
       const b = document.createElement("button");
@@ -176,6 +274,7 @@
     });
     map.appendChild(frag);
   }
+
   function renderHistory() {
     const card = $("historyCard");
     if (!hist.length) { card.hidden = true; return; }
@@ -187,50 +286,86 @@
       return `<div class="hist"><span>${when}</span><span>${h.right} / ${h.n} 題（${pct}%）</span><span class="muted">${fmtTime(h.secs)}</span></div>`;
     }).join("");
   }
+
+  function renderSubjectCards() {
+    const box = $("subjectCards");
+    box.innerHTML = SUBJECTS.map((s) => {
+      const st = s.id === subject.id ? stats : peekStats(s.id);
+      const done = Object.keys(st).length;
+      const pct = s.count ? Math.round((done / s.count) * 100) : 0;
+      const body = s.count
+        ? `<div class="mini-bar"><i style="width:${pct}%"></i></div><small>${done} / ${s.count} 題 · ${pct}%</small>`
+        : `<small class="muted">${esc(s.desc || "題庫建置中")}</small>`;
+      return `<button type="button" class="subject-card ${s.id === subject.id ? "current" : ""}" data-sid="${esc(s.id)}">
+        <span class="s-ico">${esc(s.icon || "📘")}</span>
+        <span class="s-body"><b>${esc(s.name)}</b>${body}</span></button>`;
+    }).join("");
+    $("subjectsCard").hidden = SUBJECTS.length < 2;
+  }
+
   function refreshPool() {
     const pool = currentPool();
     const [from, to] = readRange();
-    $("poolInfo").textContent = `第 ${from}–${to} 題，符合條件的共 ${pool.length} 題`;
+    $("poolInfo").textContent = BANK.length
+      ? `第 ${from}–${to} 題，符合條件的共 ${pool.length} 題`
+      : "這個科目還沒有題目";
     $("countRange").max = Math.max(1, pool.length);
     if (parseInt($("count").value, 10) > pool.length) $("count").value = Math.max(1, pool.length);
     $("countRange").value = $("count").value;
     $("countLabel").textContent = $("count").value;
     $("start").disabled = pool.length === 0;
   }
+
   function renderHome() {
     renderStats();
     renderMap();
     renderHistory();
+    renderSubjectCards();
     refreshPool();
+    renderResumeBox();
   }
+
   function saveSettings() {
-    save(K.set, {
+    save(K("set"), {
       from: $("rangeFrom").value, to: $("rangeTo").value, count: $("count").value,
       source: $("source").value, order: $("order").value, mode: $("mode").value,
       timer: $("timer").value, shuffleOpts: $("shuffleOpts").checked,
     });
   }
-  function initHome() {
-    $("rangeFrom").max = $("rangeTo").max = MAX_ID;
+
+  // 切換科目時重設首頁輸入欄位
+  function setupHomeForSubject() {
+    const max = Math.max(1, MAX_ID);
+    $("rangeFrom").max = $("rangeTo").max = max;
     $("rangeFrom").value = 1;
-    $("rangeTo").value = MAX_ID;
-    const s = load(K.set, null);
+    $("rangeTo").value = max;
+    $("count").value = Math.min(20, max);
+    $("source").value = "all"; $("order").value = "random"; $("mode").value = "instant"; $("timer").value = "up";
+    $("shuffleOpts").checked = true;
+    const s = load(K("set"), null);
     if (s) {
-      ["from:rangeFrom", "to:rangeTo", "count:count", "source:source", "order:order", "mode:mode", "timer:timer"].forEach((p) => {
-        const [k, id] = p.split(":");
+      [["from", "rangeFrom"], ["to", "rangeTo"], ["count", "count"], ["source", "source"], ["order", "order"], ["mode", "mode"], ["timer", "timer"]].forEach(([k, id]) => {
         if (s[k] !== undefined && s[k] !== "") $(id).value = s[k];
       });
       if (typeof s.shuffleOpts === "boolean") $("shuffleOpts").checked = s.shuffleOpts;
     }
     const presets = $("presets");
+    presets.innerHTML = "";
     const mk = (label, a, b) => {
       const btn = document.createElement("button");
       btn.type = "button"; btn.textContent = label; btn.dataset.a = a; btn.dataset.b = b;
       presets.appendChild(btn);
     };
-    mk("全部", 1, MAX_ID);
-    for (let a = 1; a <= MAX_ID; a += 50) mk(`${a}–${Math.min(a + 49, MAX_ID)}`, a, Math.min(a + 49, MAX_ID));
-    presets.addEventListener("click", (e) => {
+    if (MAX_ID) {
+      mk("全部", 1, MAX_ID);
+      for (let a = 1; a <= MAX_ID; a += 50) mk(`${a}–${Math.min(a + 49, MAX_ID)}`, a, Math.min(a + 49, MAX_ID));
+    }
+  }
+
+  const quickOpts = () => ({ mode: "instant", shuf: $("shuffleOpts").checked, timer: $("timer").value === "up" });
+
+  function bindHome() {
+    $("presets").addEventListener("click", (e) => {
       const b = e.target.closest("button");
       if (!b) return;
       $("rangeFrom").value = b.dataset.a;
@@ -254,13 +389,12 @@
     });
 
     // 快速開始
-    const quickOpts = () => ({ mode: "instant", shuf: $("shuffleOpts").checked, timer: $("timer").value === "up" });
     $("qsRandom").addEventListener("click", () => {
       const o = quickOpts();
       begin(shuffle(BANK).slice(0, 20), o.mode, o.shuf, o.timer);
     });
     $("qsContinue").addEventListener("click", () => {
-      const ids = Object.keys(stats).map(Number);
+      const ids = Object.keys(stats).map(Number).filter((id) => BY_ID[id]);
       let startId = ids.length ? Math.max.apply(null, ids) + 1 : 1;
       if (startId > MAX_ID) startId = 1;
       const o = quickOpts();
@@ -285,9 +419,25 @@
       begin(BANK.filter((q) => q.id >= id).slice(0, 20), o.mode, o.shuf, o.timer);
     });
 
-    // 備份
+    // 科目卡片
+    $("subjectCards").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-sid]");
+      if (b && b.dataset.sid !== subject.id) selectSubject(b.dataset.sid);
+    });
+
+    // 備份（所有科目一起）
     $("exportBtn").addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify({ stats, stars, hist, daily }, null, 1)], { type: "application/json" });
+      const out = { version: 2, subjects: {} };
+      SUBJECTS.forEach((s) => {
+        const isCur = subject && s.id === subject.id;
+        out.subjects[s.id] = {
+          stats: isCur ? stats : peekStats(s.id),
+          stars: isCur ? stars : load(keyOf(s.id, "stars"), {}),
+          hist: isCur ? hist : load(keyOf(s.id, "hist"), []),
+          daily: isCur ? daily : load(keyOf(s.id, "daily"), { d: "", n: 0 }),
+        };
+      });
+      const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = "autoquiz-backup.json";
@@ -302,10 +452,20 @@
       rd.onload = () => {
         try {
           const d = JSON.parse(rd.result);
-          if (!d || typeof d.stats !== "object") throw new Error("格式不符");
-          if (!confirm("匯入會覆蓋目前這個瀏覽器的紀錄，確定嗎？")) return;
-          stats = d.stats || {}; stars = d.stars || {}; hist = d.hist || []; daily = d.daily || { d: "", n: 0 };
-          save(K.stats, stats); save(K.stars, stars); save(K.hist, hist); save(K.daily, daily);
+          let subjects = null;
+          if (d && d.version === 2 && d.subjects) subjects = d.subjects;
+          else if (d && typeof d.stats === "object") subjects = { automation: d }; // 舊版備份
+          if (!subjects) throw new Error("格式不符");
+          if (!confirm("匯入會覆蓋目前這個瀏覽器中對應科目的紀錄，確定嗎？")) return;
+          Object.keys(subjects).forEach((sid) => {
+            const v = subjects[sid] || {};
+            save(keyOf(sid, "stats"), v.stats || {});
+            save(keyOf(sid, "stars"), v.stars || {});
+            save(keyOf(sid, "hist"), v.hist || []);
+            save(keyOf(sid, "daily"), v.daily || { d: "", n: 0 });
+            save(keyOf(sid, "migrated"), 1);
+          });
+          stats = load(K("stats"), {}); stars = load(K("stars"), {}); hist = load(K("hist"), []); daily = load(K("daily"), { d: "", n: 0 });
           renderHome();
           toast("匯入完成");
         } catch (err) { toast("匯入失敗：檔案格式不正確"); }
@@ -314,22 +474,28 @@
       rd.readAsText(f);
     });
     $("resetStats").addEventListener("click", () => {
-      if (!confirm("確定要清除所有作答紀錄、收藏與歷史嗎？")) return;
+      if (!confirm(`確定要清除「${subject.name}」的作答紀錄、收藏與歷史嗎？`)) return;
       stats = {}; stars = {}; hist = []; daily = { d: "", n: 0 };
-      save(K.stats, stats); save(K.stars, stars); save(K.hist, hist); save(K.daily, daily);
+      saveStats(); saveStars(); saveHist(); saveDaily(); drop(K("session"));
       renderHome();
       toast("已清除");
     });
+
+    // 未完成測驗
+    $("resumeGo").addEventListener("click", resumeSession);
+    $("resumeDrop").addEventListener("click", () => { drop(K("session")); renderResumeBox(); });
   }
 
-  /* ---------- 題庫瀏覽 / 錯題本 / 收藏 ---------- */
+  /* =========================================================
+   * 題庫瀏覽 / 錯題本 / 收藏
+   * ======================================================= */
   const PAGE = 30;
   let browseList = [];
   let browseShown = 0;
 
   function filteredBrowse() {
-    let from = clamp(parseInt($("bFrom").value, 10) || 1, 1, MAX_ID);
-    let to = clamp(parseInt($("bTo").value, 10) || MAX_ID, 1, MAX_ID);
+    let from = clamp(parseInt($("bFrom").value, 10) || 1, 1, Math.max(1, MAX_ID));
+    let to = clamp(parseInt($("bTo").value, 10) || MAX_ID, 1, Math.max(1, MAX_ID));
     if (from > to) [from, to] = [to, from];
     const kw = $("search").value.trim().toLowerCase();
     return BANK.filter((q) => {
@@ -350,7 +516,7 @@
       <div class="top"><span class="id">第 ${q.id} 題</span>${tag}
         <button type="button" class="star-btn ${stars[q.id] ? "on" : ""}" data-star="${q.id}" aria-label="收藏">${stars[q.id] ? "★" : "☆"}</button></div>
       <p class="qt">${esc(q.q)}</p>
-      ${q.img ? `<img class="qfig" src="${q.img}" alt="第 ${q.id} 題附圖" loading="lazy">` : ""}
+      ${q.img ? `<img class="qfig" src="${q.img}" alt="第 ${q.id} 題附圖" loading="lazy" decoding="async">` : ""}
       <ol>${opts}</ol>
       ${q.note ? `<p class="note">※ ${esc(q.note)}</p>` : ""}
     </article>`;
@@ -373,7 +539,7 @@
     $("more").hidden = browseShown >= browseList.length;
     $("browseStart").disabled = browseList.length === 0;
   }
-  function initBrowse() {
+  function bindBrowse() {
     let t = null;
     $("search").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => renderBrowse(true), 200); });
     ["bFrom", "bTo"].forEach((id) => $(id).addEventListener("input", () => renderBrowse(true)));
@@ -393,11 +559,13 @@
   }
   function toggleStar(id) {
     if (stars[id]) delete stars[id]; else stars[id] = 1;
-    save(K.stars, stars);
+    saveStars();
     updateBadges();
   }
 
-  /* ---------- 作答 ---------- */
+  /* =========================================================
+   * 作答
+   * ======================================================= */
   let session = null;
   let timerId = null;
 
@@ -406,31 +574,67 @@
     stopTimer();
     const el = $("timerTxt");
     el.hidden = !session.timed;
+    session.t0 = Date.now() - (session.secs || 0) * 1000;
     if (!session.timed) return;
-    el.textContent = fmtTime(0);
+    el.textContent = fmtTime(session.secs || 0);
     timerId = setInterval(() => {
       session.secs = Math.round((Date.now() - session.t0) / 1000);
       el.textContent = fmtTime(session.secs);
     }, 500);
   }
 
+  function makeItem(q, order) {
+    return { q, order: order || (q.fixed || !session.shuffleOpts ? [0, 1, 2, 3] : shuffle([0, 1, 2, 3])), picked: null, locked: false };
+  }
+
   function begin(questions, mode, shuffleOpts, timed) {
     if (!questions.length) { toast("沒有可以刷的題目"); return; }
-    session = {
-      mode, timed, shuffleOpts,
-      questions,
-      idx: 0, t0: Date.now(), secs: 0,
-      items: questions.map((q) => ({
-        q,
-        order: q.fixed || !shuffleOpts ? [0, 1, 2, 3] : shuffle([0, 1, 2, 3]),
-        picked: null, locked: false,
-      })),
-    };
+    session = { mode, timed, shuffleOpts, questions, idx: 0, secs: 0, items: [] };
+    session.items = questions.map((q) => makeItem(q));
+    enterQuiz();
+  }
+
+  function enterQuiz() {
     setTab("");
     showView("quiz");
     startTimer();
     buildNav();
     render();
+    persistSession();
+  }
+
+  /* ---- 未完成測驗：存在 localStorage，重新整理也不會掉 ---- */
+  function persistSession() {
+    if (!session) return;
+    save(K("session"), {
+      mode: session.mode, timed: session.timed, shuffleOpts: session.shuffleOpts,
+      idx: session.idx, secs: session.secs || 0, savedAt: Date.now(),
+      items: session.items.map((it) => ({ id: it.q.id, o: it.order, p: it.picked, l: it.locked ? 1 : 0 })),
+    });
+  }
+  function readSavedSession() {
+    const s = load(K("session"), null);
+    if (!s || !Array.isArray(s.items) || !s.items.length) return null;
+    if (!s.items.every((it) => BY_ID[it.id] && Array.isArray(it.o) && it.o.length === 4)) return null;
+    return s;
+  }
+  function renderResumeBox() {
+    const s = readSavedSession();
+    $("resumeBox").hidden = !s;
+    if (!s) return;
+    const done = s.items.filter((it) => it.p !== null).length;
+    $("resumeInfo").textContent = `${subject.name} · 已作答 ${done} / ${s.items.length} 題 · ${s.mode === "exam" ? "交卷模式" : "即時看答案"}`;
+  }
+  function resumeSession() {
+    const s = readSavedSession();
+    if (!s) { renderResumeBox(); return; }
+    session = {
+      mode: s.mode, timed: s.timed, shuffleOpts: s.shuffleOpts,
+      idx: clamp(s.idx || 0, 0, s.items.length - 1), secs: s.secs || 0,
+      items: s.items.map((it) => ({ q: BY_ID[it.id], order: it.o, picked: it.p, locked: !!it.l })),
+    };
+    session.questions = session.items.map((it) => it.q);
+    enterQuiz();
   }
 
   const correctPos = (it) => it.order.indexOf(it.q.ans);
@@ -439,13 +643,15 @@
   function buildNav() {
     const box = $("navChips");
     box.innerHTML = "";
+    const frag = document.createDocumentFragment();
     session.items.forEach((it, i) => {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = i + 1;
       b.dataset.i = i;
-      box.appendChild(b);
+      frag.appendChild(b);
     });
+    box.appendChild(frag);
     updateNav();
   }
   function updateNav() {
@@ -457,8 +663,13 @@
         else cls = "answered";
       }
       if (i === session.idx) cls += " cur";
-      chips[i].className = cls.trim();
+      if (chips[i]) chips[i].className = cls.trim();
     });
+    const cur = chips[session.idx];
+    if (cur && cur.scrollIntoView && $("navChips").scrollHeight > $("navChips").clientHeight) {
+      // 導覽列很長時，讓目前題號保持在可視範圍
+      try { cur.scrollIntoView({ block: "nearest" }); } catch (e) { /* ignore */ }
+    }
   }
 
   function render() {
@@ -466,10 +677,12 @@
     const total = session.items.length;
     $("counter").textContent = `${session.idx + 1} / ${total}`;
     $("bar").style.width = `${((session.idx + 1) / total) * 100}%`;
-    $("qno").textContent = `題庫第 ${it.q.id} 題`;
+    $("qno").textContent = `${subject.short || subject.name} 第 ${it.q.id} 題`;
     $("qtext").textContent = it.q.q;
     const img = $("qimg");
-    if (it.q.img) { img.src = it.q.img; img.hidden = false; } else { img.hidden = true; }
+    if (it.q.img) { img.src = it.q.img; img.hidden = false; } else { img.hidden = true; img.removeAttribute("src"); }
+    const nxt = session.items[session.idx + 1];
+    if (nxt && nxt.q.img) { const pre = new Image(); pre.src = nxt.q.img; }   // 預載下一題的圖
     updateStarBtn();
 
     const box = $("options");
@@ -479,6 +692,7 @@
       b.type = "button";
       b.className = "opt";
       b.dataset.pos = pos;
+      b.setAttribute("aria-label", `選項 ${LABELS[pos]}：${it.q.opts[origIdx]}`);
       b.innerHTML = `<span class="lab">${LABELS[pos]}</span><span>${esc(it.q.opts[origIdx])}</span>`;
       box.appendChild(b);
     });
@@ -493,6 +707,7 @@
     const on = !!stars[it.q.id];
     $("starBtn").textContent = on ? "★" : "☆";
     $("starBtn").classList.toggle("on", on);
+    $("starBtn").setAttribute("aria-pressed", on ? "true" : "false");
   }
 
   function paint(it) {
@@ -526,7 +741,7 @@
     if (isRight(it)) s.r++; else s.w++;
     s.last = isRight(it) ? 1 : 0;
     stats[it.q.id] = s;
-    save(K.stats, stats);
+    saveStats();
     bumpDaily();
   }
 
@@ -542,6 +757,7 @@
     }
     paint(it);
     updateNav();
+    persistSession();
   }
 
   function go(delta) {
@@ -549,6 +765,7 @@
     if (n < 0 || n >= session.items.length) return;
     session.idx = n;
     render();
+    persistSession();
   }
   function next() {
     if (session.idx < session.items.length - 1) { go(1); return; }
@@ -557,18 +774,21 @@
     finish();
   }
 
-  /* ---------- 成績 ---------- */
+  /* =========================================================
+   * 成績
+   * ======================================================= */
   function finish() {
     stopTimer();
     session.secs = Math.round((Date.now() - session.t0) / 1000);
     if (session.mode === "exam") session.items.forEach((it) => { if (it.picked !== null) record(it); });
+    drop(K("session"));
     const items = session.items;
     const total = items.length;
     const right = items.filter(isRight).length;
     const pct = Math.round((right / total) * 100);
     hist.push({ t: Date.now(), n: total, right, secs: session.secs });
     hist = hist.slice(-30);
-    save(K.hist, hist);
+    saveHist();
 
     $("bigScore").textContent = pct;
     setRing($("bigRing"), pct, pct >= 80 ? "#22c55e" : pct >= 60 ? "#f59e0b" : "#f43f5e");
@@ -591,7 +811,7 @@
           <span class="tag ${ok ? "ok" : "bad"}">${ok ? "答對" : it.picked === null ? "未作答" : "答錯"}</span>
           <button type="button" class="star-btn ${stars[it.q.id] ? "on" : ""}" data-star="${it.q.id}" aria-label="收藏">${stars[it.q.id] ? "★" : "☆"}</button></div>
         <p class="qt">${esc(it.q.q)}</p>
-        ${it.q.img ? `<img class="qfig" src="${it.q.img}" alt="第 ${it.q.id} 題附圖" loading="lazy">` : ""}
+        ${it.q.img ? `<img class="qfig" src="${it.q.img}" alt="第 ${it.q.id} 題附圖" loading="lazy" decoding="async">` : ""}
         ${ok ? "" : `<p class="mine">你的答案：${mine}</p>`}
         <p class="ans">正確答案：(${LABELS[cp]}) ${esc(it.q.opts[it.q.ans])}</p>
         ${it.q.note ? `<p class="note">※ ${esc(it.q.note)}</p>` : ""}
@@ -599,8 +819,10 @@
     }).join("") : '<div class="empty">全部答對，沒有需要檢討的題目 🎉</div>';
   }
 
-  /* ---------- 事件 ---------- */
-  function initQuizEvents() {
+  /* =========================================================
+   * 事件
+   * ======================================================= */
+  function bindQuiz() {
     $("options").addEventListener("click", (e) => {
       const b = e.target.closest(".opt");
       if (b && !b.disabled) pick(Number(b.dataset.pos));
@@ -609,7 +831,7 @@
     $("prev").addEventListener("click", () => go(-1));
     $("navChips").addEventListener("click", (e) => {
       const b = e.target.closest("button");
-      if (b) { session.idx = Number(b.dataset.i); render(); }
+      if (b) { session.idx = Number(b.dataset.i); render(); persistSession(); }
     });
     $("starBtn").addEventListener("click", () => {
       toggleStar(session.items[session.idx].q.id);
@@ -617,7 +839,8 @@
     });
     $("quit").addEventListener("click", () => {
       if (session.mode === "exam") {
-        if (confirm("要放棄這回測驗嗎？（交卷模式的答案不會被記錄）")) { goTab("home"); }
+        const choice = confirm("要先離開嗎？\n\n按「確定」＝離開，之後可在首頁「繼續作答」\n按「取消」＝留在這裡");
+        if (choice) { persistSession(); goTab("home"); }
       } else if (confirm("要結束並查看成績嗎？")) {
         finish();
       }
@@ -642,6 +865,8 @@
       b.classList.toggle("on", !!stars[b.dataset.star]);
       b.textContent = stars[b.dataset.star] ? "★" : "☆";
     });
+
+    // 鍵盤
     document.addEventListener("keydown", (e) => {
       if ($("view-quiz").hidden || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.target.matches("input,select,textarea")) return;
@@ -653,23 +878,66 @@
       if (k === "ENTER" || k === "ARROWRIGHT") { e.preventDefault(); next(); }
       if (k === "ARROWLEFT") go(-1);
     });
+
+    // 手機：左右滑動換題
+    let sx = 0, sy = 0, st = 0;
+    const card = $("view-quiz");
+    card.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    }, { passive: true });
+    card.addEventListener("touchend", (e) => {
+      if (!e.changedTouches.length || e.target.closest(".navchips")) return;
+      const dx = e.changedTouches[0].clientX - sx;
+      const dy = e.changedTouches[0].clientY - sy;
+      if (Date.now() - st < 600 && Math.abs(dx) > 70 && Math.abs(dy) < 45) go(dx < 0 ? 1 : -1);
+    }, { passive: true });
+
+    // 離開頁面前存下進度
+    window.addEventListener("pagehide", () => { if (session && !$("view-quiz").hidden) persistSession(); });
   }
 
-  /* ---------- 啟動 ---------- */
-  initTheme();
-  $("tabs").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (b) goTab(b.dataset.view);
-  });
-  $("brand").addEventListener("click", (e) => { e.preventDefault(); goTab("home"); });
-
-  if (!BANK.length) {
-    $("heroSub").textContent = "找不到題庫，請先執行 python scripts/build_data.py";
-    ["start", "qsRandom", "qsContinue", "qsWrong", "qsStar"].forEach((id) => { $(id).disabled = true; });
-  } else {
-    initHome();
-    initBrowse();
-    initQuizEvents();
-    renderHome();
+  /* =========================================================
+   * 啟動
+   * ======================================================= */
+  function registerSW() {
+    if (!("serviceWorker" in navigator) || !/^https?:$/.test(location.protocol)) return;
+    navigator.serviceWorker.register("sw.js").then(() => {
+      $("footTxt").textContent = "題庫刷題 · 紀錄僅存於本機瀏覽器 · 可離線使用";
+    }).catch(() => { /* 不支援就算了 */ });
   }
+
+  async function init() {
+    initTheme();
+    $("tabs").addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (b && subject) goTab(b.dataset.view);
+    });
+    $("brand").addEventListener("click", (e) => { e.preventDefault(); if (subject) goTab("home"); });
+
+    if (!SUBJECTS.length) {
+      $("heroSub").textContent = "找不到題庫，請先執行 python scripts/build_data.py";
+      return;
+    }
+    migrateLegacy();
+    $("subjectSel").innerHTML = SUBJECTS.map((s) =>
+      `<option value="${esc(s.id)}">${esc(s.icon || "")} ${esc(s.name)}${s.count ? "" : "（建置中）"}</option>`).join("");
+    $("subjectSel").addEventListener("change", () => selectSubject($("subjectSel").value));
+    window.addEventListener("hashchange", () => {
+      const id = location.hash.replace(/^#/, "");
+      if (subject && id && id !== subject.id && SUBJECTS.some((s) => s.id === id)) selectSubject(id, { updateHash: false });
+    });
+
+    bindHome();
+    bindBrowse();
+    bindQuiz();
+
+    const hashId = location.hash.replace(/^#/, "");
+    const saved = load(GLOBAL_KEYS.subject, null);
+    const first = [hashId, saved].find((id) => id && SUBJECTS.some((s) => s.id === id)) || SUBJECTS[0].id;
+    await selectSubject(first);
+    registerSW();
+  }
+
+  init();
 })();
