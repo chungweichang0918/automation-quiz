@@ -16,6 +16,6 @@ window.SUBJECTS = [
   "order": 2,
   "desc": "題庫建置中，之後補上",
   "id": "electrical",
-  "count": 0
+  "count": 585
  }
 ];

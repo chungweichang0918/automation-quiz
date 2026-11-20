@@ -42,8 +42,19 @@ def build_subject(sid, folder):
                 if not line.strip():
                     continue
                 p = line.split("|")
+                # 兩種格式：
+                #  (1) 題目|A|B|C|D|答案|旗標|備註          → 題號依序累計
+                #  (2) 題號|題目|A|B|C|D|答案|旗標|備註      → 明確指定題號（可跳號，補漏題時用）
+                explicit = len(p) >= 8 and p[0].strip().isdigit() and p[6].strip() in list("ABCD")
+                if explicit:
+                    qid = int(p[0].strip())
+                    p = p[1:]
+                else:
+                    qid = len(questions) + 1
                 if len(p) < 6 or p[5].strip() not in list("ABCD"):
                     sys.exit(f"格式錯誤：{os.path.relpath(path, ROOT)} 第 {lineno} 行")
+                if any(x["id"] == qid for x in questions):
+                    sys.exit(f"題號重複：{qid}（{os.path.relpath(path, ROOT)} 第 {lineno} 行）")
                 stem = p[0].strip()
                 opts = [x.strip() for x in p[1:5]]
                 ans = "ABCD".index(p[5].strip())
@@ -51,7 +62,7 @@ def build_subject(sid, folder):
                 note = p[7].strip() if len(p) > 7 else ""
                 fig = "FIG" in flags
                 fixed = fig or "F" in flags or any(k in o for o in opts for k in KEYWORDS)
-                q = {"id": len(questions) + 1, "q": stem, "opts": opts, "ans": ans}
+                q = {"id": qid, "q": stem, "opts": opts, "ans": ans}
                 if fixed:
                     q["fixed"] = True
                 if fig:
@@ -65,6 +76,7 @@ def build_subject(sid, folder):
                     q["q"] = re.sub(r"【圖：[^】]*】", "", q["q"])
                     q["q"] = re.sub(r"（[^（）]*請對照原書圖[^（）]*）", "", q["q"]).strip()
                 questions.append(q)
+    questions.sort(key=lambda x: x["id"])
     out = os.path.join(ROOT, "data", f"{sid}.js")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
